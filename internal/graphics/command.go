@@ -26,15 +26,6 @@ import (
 	"github.com/hajimehoshi/ebiten/internal/graphics/opengl"
 )
 
-func glMatrix(m *[4][4]float64) []float32 {
-	return []float32{
-		float32(m[0][0]), float32(m[1][0]), float32(m[2][0]), float32(m[3][0]),
-		float32(m[0][1]), float32(m[1][1]), float32(m[2][1]), float32(m[3][1]),
-		float32(m[0][2]), float32(m[1][2]), float32(m[2][2]), float32(m[3][2]),
-		float32(m[0][3]), float32(m[1][3]), float32(m[2][3]), float32(m[3][3]),
-	}
-}
-
 type Matrix interface {
 	Element(i, j int) float64
 }
@@ -58,12 +49,42 @@ func (q *commandQueue) Enqueue(command command) {
 	q.commands = append(q.commands, command)
 }
 
+func mergeCommands(commands []command) []command {
+	// TODO: This logic is relatively complicated. Add tests.
+	cs := make([]command, 0, len(commands))
+	var prev *drawImageCommand
+	for _, c := range commands {
+		switch c := c.(type) {
+		case *drawImageCommand:
+			if prev == nil {
+				prev = c
+				continue
+			}
+			if prev.isMergeable(c) {
+				prev = prev.merge(c)
+				continue
+			}
+			cs = append(cs, prev)
+			prev = c
+			continue
+		}
+		if prev != nil {
+			cs = append(cs, prev)
+			prev = nil
+		}
+		cs = append(cs, c)
+	}
+	if prev != nil {
+		cs = append(cs, prev)
+	}
+	return cs
+}
+
 // commandGroups separates q.commands into some groups.
 // The number of quads of drawImageCommand in one groups must be equal to or less than
 // its limit (maxQuads).
 func (q *commandQueue) commandGroups() [][]command {
-	cs := make([]command, len(q.commands))
-	copy(cs, q.commands)
+	cs := mergeCommands(q.commands)
 	gs := [][]command{}
 	quads := 0
 	for 0 < len(cs) {
@@ -96,7 +117,14 @@ func (q *commandQueue) Flush(context *opengl.Context) error {
 	// glViewport must be called at least at every frame on iOS.
 	context.ResetViewportSize()
 	for _, g := range q.commandGroups() {
-		vertices := []int16{}
+		n := 0
+		for _, c := range g {
+			switch c := c.(type) {
+			case *drawImageCommand:
+				n += len(c.vertices)
+			}
+		}
+		vertices := make([]int16, 0, n)
 		for _, c := range g {
 			switch c := c.(type) {
 			case *drawImageCommand:
@@ -108,8 +136,8 @@ func (q *commandQueue) Flush(context *opengl.Context) error {
 		}
 		// NOTE: WebGL doesn't seem to have Check gl.MAX_ELEMENTS_VERTICES or gl.MAX_ELEMENTS_INDICES so far.
 		// Let's use them to compare to len(quads) in the future.
-		if maxQuads < len(vertices)/16 {
-			return errors.New(fmt.Sprintf("len(quads) must be equal to or less than %d", maxQuads))
+		if maxQuads < len(vertices)/QuadVertexSizeInBytes() {
+			return fmt.Errorf("len(quads) must be equal to or less than %d", maxQuads)
 		}
 		numc := len(g)
 		indexOffsetInBytes := 0
@@ -118,7 +146,8 @@ func (q *commandQueue) Flush(context *opengl.Context) error {
 				return err
 			}
 			if c, ok := c.(*drawImageCommand); ok {
-				indexOffsetInBytes += 6 * len(c.vertices) / 16 * 2
+				n := len(c.vertices) * 2 / QuadVertexSizeInBytes()
+				indexOffsetInBytes += 6 * n * 2
 			}
 		}
 		if 0 < numc {
@@ -156,9 +185,12 @@ type drawImageCommand struct {
 	dst      *Image
 	src      *Image
 	vertices []int16
-	geo      Matrix
 	color    Matrix
 	mode     opengl.CompositeMode
+}
+
+func QuadVertexSizeInBytes() int {
+	return 4 * theArrayBufferLayout.totalBytes()
 }
 
 func (c *drawImageCommand) Exec(context *opengl.Context, indexOffsetInBytes int) error {
@@ -172,14 +204,13 @@ func (c *drawImageCommand) Exec(context *opengl.Context, indexOffsetInBytes int)
 		return nil
 	}
 	_, h := c.dst.Size()
-	proj := glMatrix(c.dst.framebuffer.projectionMatrix(h))
+	proj := c.dst.framebuffer.projectionMatrix(h)
 	p := programContext{
 		state:            &theOpenGLState,
 		program:          theOpenGLState.programTexture,
 		context:          context,
 		projectionMatrix: proj,
 		texture:          c.src.texture.native,
-		geoM:             c.geo,
 		colorM:           c.color,
 	}
 	if err := p.begin(); err != nil {
@@ -195,13 +226,41 @@ func (c *drawImageCommand) Exec(context *opengl.Context, indexOffsetInBytes int)
 func (c *drawImageCommand) split(quadsNum int) [2]*drawImageCommand {
 	c1 := *c
 	c2 := *c
-	c1.vertices = c.vertices[:quadsNum*16]
-	c2.vertices = c.vertices[quadsNum*16:]
+	c1.vertices = c.vertices[:quadsNum*QuadVertexSizeInBytes()/2]
+	c2.vertices = c.vertices[quadsNum*QuadVertexSizeInBytes()/2:]
 	return [2]*drawImageCommand{&c1, &c2}
 }
 
+func (c *drawImageCommand) isMergeable(other *drawImageCommand) bool {
+	if c.dst != other.dst {
+		return false
+	}
+	if c.src != other.src {
+		return false
+	}
+	for i := 0; i < 4; i++ {
+		for j := 0; j < 5; j++ {
+			if c.color.Element(i, j) != other.color.Element(i, j) {
+				return false
+			}
+		}
+	}
+	if c.mode != other.mode {
+		return false
+	}
+	return true
+}
+
+func (c *drawImageCommand) merge(other *drawImageCommand) *drawImageCommand {
+	newC := *c
+	newC.vertices = make([]int16, 0, len(c.vertices)+len(other.vertices))
+	newC.vertices = append(newC.vertices, c.vertices...)
+	newC.vertices = append(newC.vertices, other.vertices...)
+	return &newC
+}
+
 func (c *drawImageCommand) quadsNum() int {
-	return len(c.vertices) / 16
+	return len(c.vertices) * 2 / QuadVertexSizeInBytes()
 }
 
 type replacePixelsCommand struct {
@@ -256,8 +315,8 @@ func adjustImageForTexture(img *image.RGBA) *image.RGBA {
 	adjustedImageBounds := image.Rectangle{
 		image.ZP,
 		image.Point{
-			int(NextPowerOf2Int32(int32(width))),
-			int(NextPowerOf2Int32(int32(height))),
+			NextPowerOf2Int(width),
+			NextPowerOf2Int(height),
 		},
 	}
 	if img.Bounds() == adjustedImageBounds {
@@ -305,8 +364,8 @@ type newImageCommand struct {
 }
 
 func (c *newImageCommand) Exec(context *opengl.Context, indexOffsetInBytes int) error {
-	w := int(NextPowerOf2Int32(int32(c.width)))
-	h := int(NextPowerOf2Int32(int32(c.height)))
+	w := NextPowerOf2Int(c.width)
+	h := NextPowerOf2Int(c.height)
 	if w < 1 {
 		return errors.New("graphics: width must be equal or more than 1.")
 	}

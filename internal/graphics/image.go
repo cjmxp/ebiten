@@ -94,12 +94,11 @@ func (i *Image) Fill(clr color.RGBA) error {
 	return nil
 }
 
-func (i *Image) DrawImage(src *Image, vertices []int16, geo, clr Matrix, mode opengl.CompositeMode) error {
+func (i *Image) DrawImage(src *Image, vertices []int16, clr Matrix, mode opengl.CompositeMode) error {
 	c := &drawImageCommand{
 		dst:      i,
 		src:      src,
 		vertices: vertices,
-		geo:      geo,
 		color:    clr,
 		mode:     mode,
 	}

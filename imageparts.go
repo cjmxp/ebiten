@@ -15,11 +15,7 @@
 package ebiten
 
 import (
-	"fmt"
 	"image"
-	"math"
-
-	"github.com/hajimehoshi/ebiten/internal/graphics"
 )
 
 // An ImagePart is deprecated (as of 1.1.0-alpha): Use ImageParts instead.
@@ -67,60 +63,4 @@ func (w *wholeImage) Dst(i int) (x0, y0, x1, y1 int) {
 
 func (w *wholeImage) Src(i int) (x0, y0, x1, y1 int) {
 	return 0, 0, w.width, w.height
-}
-
-func u(x, width2p int) int16 {
-	return int16(math.MaxInt16 * x / width2p)
-}
-
-func v(y, height2p int) int16 {
-	return int16(math.MaxInt16 * y / height2p)
-}
-
-type textureQuads struct {
-	parts  ImageParts
-	width  int
-	height int
-}
-
-func (t *textureQuads) vertices(vertices []int16) int {
-	l := t.parts.Len()
-	if len(vertices) < l*16 {
-		panic(fmt.Sprintf("ebiten: vertices size must be greater than %d but %d", l*16, len(vertices)))
-	}
-	p := t.parts
-	w, h := t.width, t.height
-	n := 0
-	width2p := int(graphics.NextPowerOf2Int32(int32(w)))
-	height2p := int(graphics.NextPowerOf2Int32(int32(h)))
-	for i := 0; i < l; i++ {
-		dx0, dy0, dx1, dy1 := p.Dst(i)
-		if dx0 == dx1 || dy0 == dy1 {
-			continue
-		}
-		x0, y0, x1, y1 := int16(dx0), int16(dy0), int16(dx1), int16(dy1)
-		sx0, sy0, sx1, sy1 := p.Src(i)
-		if sx0 == sx1 || sy0 == sy1 {
-			continue
-		}
-		u0, v0, u1, v1 := u(sx0, width2p), v(sy0, height2p), u(sx1, width2p), v(sy1, height2p)
-		vertices[16*n] = x0
-		vertices[16*n+1] = y0
-		vertices[16*n+2] = u0
-		vertices[16*n+3] = v0
-		vertices[16*n+4] = x1
-		vertices[16*n+5] = y0
-		vertices[16*n+6] = u1
-		vertices[16*n+7] = v0
-		vertices[16*n+8] = x0
-		vertices[16*n+9] = y1
-		vertices[16*n+10] = u0
-		vertices[16*n+11] = v1
-		vertices[16*n+12] = x1
-		vertices[16*n+13] = y1
-		vertices[16*n+14] = u1
-		vertices[16*n+15] = v1
-		n++
-	}
-	return n
 }

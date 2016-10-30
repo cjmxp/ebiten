@@ -54,6 +54,8 @@ func init() {
 	StaticDraw = mgl.STATIC_DRAW
 	Triangles = mgl.TRIANGLES
 	Lines = mgl.LINES
+	Short = mgl.SHORT
+	Float = mgl.FLOAT
 
 	zero = mgl.ZERO
 	one = mgl.ONE
@@ -336,10 +338,10 @@ func (c *Context) getAttribLocationImpl(p Program, location string) attribLocati
 	return a
 }
 
-func (c *Context) VertexAttribPointer(p Program, location string, normalize bool, stride int, size int, v int) {
+func (c *Context) VertexAttribPointer(p Program, location string, size int, dataType DataType, normalize bool, stride int, offset int) {
 	gl := c.gl
 	l := c.locationCache.GetAttribLocation(c, p, location)
-	gl.VertexAttribPointer(mgl.Attrib(l), size, mgl.SHORT, normalize, stride, v)
+	gl.VertexAttribPointer(mgl.Attrib(l), size, mgl.Enum(dataType), normalize, stride, offset)
 }
 
 func (c *Context) EnableVertexAttribArray(p Program, location string) {
@@ -354,20 +356,12 @@ func (c *Context) DisableVertexAttribArray(p Program, location string) {
 	gl.DisableVertexAttribArray(mgl.Attrib(l))
 }
 
-func uint16ToBytes(v []uint16) []byte {
-	b := make([]byte, len(v)*2)
+func uint16ToBytes(v []uint16) []uint8 {
+	// TODO: Consider endian?
+	b := make([]uint8, len(v)*2)
 	for i, x := range v {
-		b[2*i] = byte(x)
-		b[2*i+1] = byte(x >> 8)
-	}
-	return b
-}
-
-func int16ToBytes(v []int16) []byte {
-	b := make([]byte, len(v)*2)
-	for i, x := range v {
-		b[2*i] = byte(uint16(x))
-		b[2*i+1] = byte(uint16(x) >> 8)
+		b[2*i] = uint8(x)
+		b[2*i+1] = uint8(x >> 8)
 	}
 	return b
 }
@@ -390,6 +384,15 @@ func (c *Context) NewBuffer(bufferType BufferType, v interface{}, bufferUsage Bu
 func (c *Context) BindElementArrayBuffer(b Buffer) {
 	gl := c.gl
 	gl.BindBuffer(mgl.ELEMENT_ARRAY_BUFFER, mgl.Buffer(b))
+}
+
+func int16ToBytes(v []int16) []byte {
+	b := make([]byte, len(v)*2)
+	for i, x := range v {
+		b[2*i] = uint8(uint16(x))
+		b[2*i+1] = uint8(uint16(x) >> 8)
+	}
+	return b
 }
 
 func (c *Context) BufferSubData(bufferType BufferType, data []int16) {

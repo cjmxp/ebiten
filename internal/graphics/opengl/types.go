@@ -72,3 +72,16 @@ func operations(mode CompositeMode) (src operation, dst operation) {
 		panic("not reach")
 	}
 }
+
+type DataType int
+
+func (d DataType) SizeInBytes() int {
+	switch d {
+	case Short:
+		return 2
+	case Float:
+		return 4
+	default:
+		panic("not reach")
+	}
+}

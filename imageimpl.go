@@ -128,11 +128,8 @@ func (i *imageImpl) DrawImage(image *Image, options *DrawImageOptions) error {
 		}
 	}
 	w, h := image.impl.restorable.Size()
-	quads := &textureQuads{parts: parts, width: w, height: h}
-	// TODO: Reuse one vertices instead of making here, but this would need locking.
-	vertices := make([]int16, parts.Len()*16)
-	n := quads.vertices(vertices)
-	if n == 0 {
+	vs := vertices(parts, w, h, &options.GeoM)
+	if len(vs) == 0 {
 		return nil
 	}
 	if i == image.impl {
@@ -143,10 +140,9 @@ func (i *imageImpl) DrawImage(image *Image, options *DrawImageOptions) error {
 	if i.restorable == nil {
 		return errors.New("ebiten: image is already disposed")
 	}
-	geom := options.GeoM
 	colorm := options.ColorM
 	mode := opengl.CompositeMode(options.CompositeMode)
-	if err := i.restorable.DrawImage(image.impl.restorable, vertices, &geom, &colorm, mode); err != nil {
+	if err := i.restorable.DrawImage(image.impl.restorable, vs, &colorm, mode); err != nil {
 		return err
 	}
 	return nil

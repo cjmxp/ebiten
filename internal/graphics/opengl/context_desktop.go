@@ -57,6 +57,8 @@ func init() {
 	StaticDraw = gl.STATIC_DRAW
 	Triangles = gl.TRIANGLES
 	Lines = gl.LINES
+	Short = gl.SHORT
+	Float = gl.FLOAT
 
 	zero = gl.ZERO
 	one = gl.ONE
@@ -432,10 +434,10 @@ func (c *Context) getAttribLocationImpl(p Program, location string) attribLocati
 	return attrib
 }
 
-func (c *Context) VertexAttribPointer(p Program, location string, normalize bool, stride int, size int, v int) {
+func (c *Context) VertexAttribPointer(p Program, location string, size int, dataType DataType, normalize bool, stride int, offset int) {
 	_ = c.runOnContextThread(func() error {
 		l := c.locationCache.GetAttribLocation(c, p, location)
-		gl.VertexAttribPointer(uint32(l), int32(size), gl.SHORT, normalize, int32(stride), gl.PtrOffset(v))
+		gl.VertexAttribPointer(uint32(l), int32(size), uint32(dataType), normalize, int32(stride), gl.PtrOffset(offset))
 		return nil
 	})
 }
@@ -466,6 +468,7 @@ func (c *Context) NewBuffer(bufferType BufferType, v interface{}, bufferUsage Bu
 		case int:
 			gl.BufferData(uint32(bufferType), v, nil, uint32(bufferUsage))
 		case []uint16:
+			// TODO: What about the endianness?
 			gl.BufferData(uint32(bufferType), 2*len(v), gl.Ptr(v), uint32(bufferUsage))
 		default:
 			panic("not reach")
@@ -485,7 +488,7 @@ func (c *Context) BindElementArrayBuffer(b Buffer) {
 
 func (c *Context) BufferSubData(bufferType BufferType, data []int16) {
 	_ = c.runOnContextThread(func() error {
-		gl.BufferSubData(uint32(bufferType), 0, 2*len(data), gl.Ptr(data))
+		gl.BufferSubData(uint32(bufferType), 0, len(data)*2, gl.Ptr(data))
 		return nil
 	})
 }

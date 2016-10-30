@@ -20,6 +20,86 @@ import (
 	"github.com/hajimehoshi/ebiten/internal/graphics/opengl"
 )
 
+type arrayBufferLayoutPart struct {
+	// TODO: This struct should belong to a program and know it.
+	name      string
+	dataType  opengl.DataType
+	num       int
+	normalize bool
+}
+
+type arrayBufferLayout struct {
+	parts []arrayBufferLayoutPart
+	total int
+}
+
+func (a *arrayBufferLayout) totalBytes() int {
+	if a.total != 0 {
+		return a.total
+	}
+	t := 0
+	for _, p := range a.parts {
+		t += p.dataType.SizeInBytes() * p.num
+	}
+	a.total = t
+	return a.total
+}
+
+func (a *arrayBufferLayout) newArrayBuffer(c *opengl.Context) opengl.Buffer {
+	return c.NewBuffer(opengl.ArrayBuffer, a.totalBytes()*4*maxQuads, opengl.DynamicDraw)
+}
+
+func (a *arrayBufferLayout) enable(c *opengl.Context, program opengl.Program) {
+	for _, p := range a.parts {
+		c.EnableVertexAttribArray(program, p.name)
+	}
+	total := a.totalBytes()
+	offset := 0
+	for _, p := range a.parts {
+		c.VertexAttribPointer(program, p.name, p.num, p.dataType, p.normalize, total, offset)
+		offset += p.dataType.SizeInBytes() * p.num
+	}
+}
+
+func (a *arrayBufferLayout) disable(c *opengl.Context, program opengl.Program) {
+	// TODO: Disabling should be done in reversed order?
+	for _, p := range a.parts {
+		c.DisableVertexAttribArray(program, p.name)
+	}
+}
+
+var (
+	theArrayBufferLayout = arrayBufferLayout{
+		// Note that GL_MAX_VERTEX_ATTRIBS is at least 16.
+		parts: []arrayBufferLayoutPart{
+			{
+				name:      "vertex",
+				dataType:  opengl.Short,
+				num:       2,
+				normalize: false,
+			},
+			{
+				name:      "tex_coord",
+				dataType:  opengl.Short,
+				num:       2,
+				normalize: true,
+			},
+			{
+				name:      "geo_matrix_body",
+				dataType:  opengl.Float,
+				num:       4,
+				normalize: false,
+			},
+			{
+				name:      "geo_matrix_translation",
+				dataType:  opengl.Float,
+				num:       2,
+				normalize: false,
+			},
+		},
+	}
+)
+
 type openGLState struct {
 	arrayBuffer      opengl.Buffer
 	indexBufferQuads opengl.Buffer
@@ -27,7 +107,6 @@ type openGLState struct {
 
 	lastProgram                opengl.Program
 	lastProjectionMatrix       []float32
-	lastModelviewMatrix        []float32
 	lastColorMatrix            []float32
 	lastColorMatrixTranslation []float32
 }
@@ -45,12 +124,6 @@ const (
 	maxQuads   = indicesNum / 6
 )
 
-// unsafe.SizeOf can't be used because unsafe doesn't work with GopherJS.
-const (
-	int16Size   = 2
-	float32Size = 4
-)
-
 func Reset(context *opengl.Context) error {
 	return theOpenGLState.reset(context)
 }
@@ -61,7 +134,6 @@ func (s *openGLState) reset(context *opengl.Context) error {
 	}
 	s.lastProgram = zeroProgram
 	s.lastProjectionMatrix = nil
-	s.lastModelviewMatrix = nil
 	s.lastColorMatrix = nil
 	s.lastColorMatrixTranslation = nil
 
@@ -95,8 +167,7 @@ func (s *openGLState) reset(context *opengl.Context) error {
 		return err
 	}
 
-	const stride = 8 // (2 [vertices] + 2 [texels]) * 2 [sizeof(int16)/bytes]
-	s.arrayBuffer = context.NewBuffer(opengl.ArrayBuffer, 4*stride*maxQuads, opengl.DynamicDraw)
+	s.arrayBuffer = theArrayBufferLayout.newArrayBuffer(context)
 
 	indices := make([]uint16, 6*maxQuads)
 	for i := uint16(0); i < maxQuads; i++ {
@@ -130,7 +201,6 @@ type programContext struct {
 	context          *opengl.Context
 	projectionMatrix []float32
 	texture          opengl.Texture
-	geoM             Matrix
 	colorM           Matrix
 }
 
@@ -139,17 +209,12 @@ func (p *programContext) begin() error {
 	if p.state.lastProgram != p.program {
 		c.UseProgram(p.program)
 		if p.state.lastProgram != zeroProgram {
-			c.DisableVertexAttribArray(p.state.lastProgram, "tex_coord")
-			c.DisableVertexAttribArray(p.state.lastProgram, "vertex")
+			theArrayBufferLayout.disable(c, p.state.lastProgram)
 		}
-		c.EnableVertexAttribArray(p.program, "vertex")
-		c.EnableVertexAttribArray(p.program, "tex_coord")
-		c.VertexAttribPointer(p.program, "vertex", false, int16Size*4, 2, int16Size*0)
-		c.VertexAttribPointer(p.program, "tex_coord", true, int16Size*4, 2, int16Size*2)
+		theArrayBufferLayout.enable(c, p.program)
 
 		p.state.lastProgram = p.state.programTexture
 		p.state.lastProjectionMatrix = nil
-		p.state.lastModelviewMatrix = nil
 		p.state.lastColorMatrix = nil
 		p.state.lastColorMatrixTranslation = nil
 		c.BindElementArrayBuffer(p.state.indexBufferQuads)
@@ -162,26 +227,6 @@ func (p *programContext) begin() error {
 			p.state.lastProjectionMatrix = make([]float32, 16)
 		}
 		copy(p.state.lastProjectionMatrix, p.projectionMatrix)
-	}
-
-	ma := float32(p.geoM.Element(0, 0))
-	mb := float32(p.geoM.Element(0, 1))
-	mc := float32(p.geoM.Element(1, 0))
-	md := float32(p.geoM.Element(1, 1))
-	tx := float32(p.geoM.Element(0, 2))
-	ty := float32(p.geoM.Element(1, 2))
-	modelviewMatrix := []float32{
-		ma, mc, 0, 0,
-		mb, md, 0, 0,
-		0, 0, 1, 0,
-		tx, ty, 0, 1,
-	}
-	if !areSameFloat32Array(p.state.lastModelviewMatrix, modelviewMatrix) {
-		c.UniformFloats(p.program, "modelview_matrix", modelviewMatrix)
-		if p.state.lastModelviewMatrix == nil {
-			p.state.lastModelviewMatrix = make([]float32, 16)
-		}
-		copy(p.state.lastModelviewMatrix, modelviewMatrix)
 	}
 
 	e := [4][5]float32{}

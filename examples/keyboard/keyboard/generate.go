@@ -1,4 +1,4 @@
-// Copyright 2014 Hajime Hoshi
+// Copyright 2015 Hajime Hoshi
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,29 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package graphics_test
+// +build example
 
-import (
-	. "github.com/hajimehoshi/ebiten/internal/graphics"
-	"testing"
-)
+//go:generate go run -tags=example gen.go
+//go:generate gofmt -s -w .
 
-func TestNextPowerOf2(t *testing.T) {
-	testCases := []struct {
-		expected int
-		arg      int
-	}{
-		{256, 255},
-		{256, 256},
-		{512, 257},
-	}
-
-	for _, testCase := range testCases {
-		got := NextPowerOf2Int(testCase.arg)
-		wanted := testCase.expected
-		if wanted != got {
-			t.Errorf("Clp(%d) = %d, wanted %d", testCase.arg, got, wanted)
-		}
-
-	}
-}
+package keyboard
